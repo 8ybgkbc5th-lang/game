@@ -3,370 +3,315 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Zombie Survivor 2D</title>
+    <title>Toy Highway Racer</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
             margin: 0;
             padding: 0;
-            background-color: #111827;
-            color: #ffffff;
-            font-family: sans-serif;
+            background-color: #0b0f19;
             overflow: hidden;
+            font-family: sans-serif;
             user-select: none;
             touch-action: none;
         }
-        #ui {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            font-weight: bold;
-            font-size: 14px;
-            z-index: 10;
-            text-shadow: 1px 1px 3px black;
-            pointer-events: none;
-        }
         canvas {
             display: block;
-            background-color: #1f2937;
+            width: 100vw;
+            height: 100vh;
         }
-        /* Віртуальний джойстик */
-        #joystick-zone {
+        #score-board {
             position: absolute;
-            bottom: 40px;
-            left: 40px;
-            width: 120px;
-            height: 120px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 50%;
-            border: 2px solid rgba(255, 255, 255, 0.3);
+            top: 15px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 24px;
+            font-weight: bold;
+            color: #ffffff;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 8px 20px;
+            border-radius: 20px;
+            border: 3px solid #ffffff;
+            text-shadow: 2px 2px 0px #000;
             z-index: 10;
-        }
-        #joystick-stick {
-            position: absolute;
-            width: 50px;
-            height: 50px;
-            background: rgba(59, 130, 246, 0.7);
-            border-radius: 50%;
-            top: 35px;
-            left: 35px;
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
 
-    <div id="ui">
-        <div>HP: <span id="hp-val">100</span> / <span id="max-hp-val">100</span></div>
-        <div>LEVEL: <span id="lvl-val">1</span> (EXP: <span id="exp-val">0</span>/10)</div>
-        <div>ZOMBIES KILLED: <span id="kills-val">0</span></div>
-    </div>
-
-    <div id="joystick-zone">
-        <div id="joystick-stick"></div>
-    </div>
-
-    <canvas id="gameCanvas"></canvas>
+    <div id="score-board">SCORE: <span id="score-val">0</span></div>
+    <canvas id="raceCanvas"></canvas>
 
     <script>
         const tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
 
-        const canvas = document.getElementById('gameCanvas');
+        const canvas = document.getElementById('raceCanvas');
         const ctx = canvas.getContext('2d');
 
-        // Підганяємо розмір екрана
+        // Адаптація під екран телефону
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
 
-        // Ігрові змінні
-        let player = {
-            x: canvas.width / 2,
-            y: canvas.height / 2,
-            radius: 18,
-            speed: 3.5,
-            hp: 100,
-            maxHp: 100,
-            level: 1,
-            exp: 0,
-            nextLevelExp: 10,
-            damage: 25
+        // Палітра кольорів (Toy Style)
+        const COLORS = {
+            sky: '#4facfe', skyDark: '#00f2fe', // Градієнт неба
+            mountain: '#334155',
+            city: '#1e293b',
+            containerRed: '#ef4444', containerBlue: '#3b82f6',
+            road: '#475569', roadLine: '#facc15',
+            player: '#dc2626', enemy1: '#fbbf24', enemy2: '#a855f7',
+            outline: '#000000'
         };
 
-        let zombies = [];
-        let bullets = [];
-        let gems = [];
-        let kills = 0;
-        let lastShotTime = 0;
-        let shotInterval = 400; // Швидкість стрільби (мс)
+        // НАЛАШТУВАННЯ ШВИДКОСТІ ТА РУХУ
+        let globalSpeed = 5;
+        let score = 0;
+        let gameActive = true;
 
-        // Джойстик керування
-        const joystickZone = document.getElementById('joystick-zone');
-        const joystickStick = document.getElementById('joystick-stick');
-        let joystickActive = false;
-        let joystickStart = { x: 0, y: 0 };
-        let moveDir = { x: 0, y: 0 };
+        // Окремі змінні для Паралаксу (Логіка пункту 5)
+        let bgOffset1 = 0; // Найдальший фон (гори)
+        let bgOffset2 = 0; // Середній фон (місто/будівлі)
+        let bgOffset3 = 0; // Ближній фон (рекламні щити, контейнери)
+        let roadOffset = 0; // Дорога (рухається найшвидше)
 
-        // Обробка дотиків для джойстика
-        window.addEventListener('touchstart', (e) => {
-            const touch = e.touches[0];
-            const rect = joystickZone.getBoundingClientRect();
-            // Перевіряємо, чи натиснули в зоні джойстика
-            if (touch.clientX >= rect.left && touch.clientX <= rect.right &&
-                touch.clientY >= rect.top && touch.clientY <= rect.bottom) {
-                joystickActive = true;
-                joystickStart = { x: rect.left + 60, y: rect.top + 60 };
-            }
-        });
+        // Гравець (Іграшкова фура)
+        let player = {
+            x: canvas.width / 2,
+            y: canvas.height - 120,
+            width: 50,
+            height: 85,
+            targetX: canvas.width / 2,
+            turnSpeed: 0.15,
+            bounceTimer: 0
+        };
 
-        window.addEventListener('touchmove', (e) => {
-            if (!joystickActive) return;
-            const touch = e.touches[0];
+        // Трафік (інші машинки)
+        let traffic = [];
+        function spawnEnemy() {
+            if (!gameActive) return;
+            const lanes = [canvas.width * 0.25, canvas.width * 0.4, canvas.width * 0.55, canvas.width * 0.7];
+            const randomLane = lanes[Math.floor(Math.random() * lanes.length)];
             
-            let dx = touch.clientX - joystickStart.x;
-            let dy = touch.clientY - joystickStart.y;
-            let distance = Math.sqrt(dx * dx + dy * dy);
-            
-            // Обмежуємо рух стіка межами джойстика
-            if (distance > 40) {
-                dx = (dx / distance) * 40;
-                dy = (dy / distance) * 40;
-                distance = 40;
-            }
+            // Перевірка, щоб машини не спавнились одна на одній
+            if (traffic.some(e => Math.abs(e.y) < 150 && Math.abs(e.x - randomLane) < 20)) return;
 
-            joystickStick.style.transform = `translate(${dx}px, ${dy}px)`;
-            
-            // Напрямок руху
-            moveDir.x = dx / 40;
-            moveDir.y = dy / 40;
-        });
-
-        window.addEventListener('touchend', () => {
-            joystickActive = false;
-            joystickStick.style.transform = `translate(0px, 0px)`;
-            moveDir = { x: 0, y: 0 };
-        });
-
-        // Спавн зомбі
-        function spawnZombie() {
-            if (zombies.length > 25) return; // Обмеження кількості
-            
-            let x, y;
-            // З'являються за межами екрана
-            if (Math.random() < 0.5) {
-                x = Math.random() < 0.5 ? -30 : canvas.width + 30;
-                y = Math.random() * canvas.height;
-            } else {
-                x = Math.random() * canvas.width;
-                y = Math.random() < 0.5 ? -30 : canvas.height + 30;
-            }
-
-            zombies.push({
-                x: x,
-                y: y,
-                radius: 15,
-                hp: 40 + (player.level * 10),
-                speed: 1 + Math.random() * 0.8
+            traffic.push({
+                x: randomLane,
+                y: -100,
+                width: 42,
+                height: 70,
+                color: Math.random() > 0.5 ? COLORS.enemy1 : COLORS.enemy2,
+                speed: 2 + Math.random() * 2
             });
         }
-        setInterval(spawnZombie, 1500);
+        setInterval(spawnEnemy, 1200);
 
-        // Головний ігровий цикл (Оновлення та Малювання)
-        function gameLoop(currentTime) {
-            // 1. ОНОВЛЕННЯ ЛОГІКИ
+        // Об'єкти ближнього фону (Рекламні щити та контейнери для відчуття швидкості)
+        let sideObjects = [];
+        function spawnSideObject() {
+            if (!gameActive) return;
+            let isLeft = Math.random() > 0.5;
+            sideObjects.push({
+                x: isLeft ? canvas.width * 0.05 : canvas.width * 0.85,
+                y: -120,
+                width: 55,
+                height: 45,
+                type: Math.random() > 0.4 ? 'billboard' : 'container',
+                color: Math.random() > 0.5 ? COLORS.containerRed : COLORS.containerBlue
+            });
+        }
+        setInterval(spawnSideObject, 800);
+
+        // КЕРУВАННЯ ТАПКАМИ НА ТЕЛЕФОНІ
+        window.addEventListener('touchstart', (e) => {
+            if (!gameActive) {
+                // Перезапуск гри при тапі після аварії
+                gameActive = true;
+                score = 0;
+                globalSpeed = 5;
+                traffic = [];
+                sideObjects = [];
+                player.x = canvas.width / 2;
+                player.targetX = canvas.width / 2;
+                document.getElementById('score-board').style.display = 'block';
+                return;
+            }
+            const touchX = e.touches[0].clientX;
+            // Якщо тапнули зліва — зміщуємось ліворуч, якщо справа — праворуч
+            if (touchX < canvas.width / 2) {
+                player.targetX = Math.max(canvas.width * 0.25, player.x - canvas.width * 0.15);
+            } else {
+                player.targetX = Math.min(canvas.width * 0.7, player.x + canvas.width * 0.15);
+            }
+        });
+
+        // МАЛЮВАННЯ ОБ'ЄКТІВ З ТОВСТИМ КОНТУРОМ (Пункт 2 - Мультяшний стиль)
+        function drawCardboardObj(x, y, w, h, color, radius = 8) {
+            ctx.save();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = COLORS.outline;
+            ctx.fillStyle = color;
             
-            // Рух гравця
-            player.x += moveDir.x * player.speed;
-            player.y += moveDir.y * player.speed;
+            // Малюємо закруглений пластиковий кубик
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, radius);
+            ctx.fill();
+            ctx.stroke();
+            ctx.restore();
+        }
 
-            // Обмеження екрана для гравця
-            player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-            player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+        // ГОЛОВНИЙ ЦИКЛ ГРИ
+        function updateAndRender() {
+            // 1. ЛОГІКА РУХУ ТА ПАРАЛАКСУ
+            if (gameActive) {
+                globalSpeed += 0.002; // Поступове прискорення
+                score += 1;
+                document.getElementById('score-val').innerText = Math.floor(score / 10);
 
-            // Автоматична стрільба в найближчого зомбі
-            if (zombies.length > 0 && currentTime - lastShotTime > shotInterval) {
-                // Шукаємо найближчого
-                let nearestZombie = zombies[0];
-                let minDist = Infinity;
-                
-                zombies.forEach(z => {
-                    let dist = Math.hypot(z.x - player.x, z.y - player.y);
-                    if (dist < minDist) {
-                        minDist = dist;
-                        nearestZombie = z;
-                    }
-                });
+                // Нарахування зміщень за твоїми коефіцієнтами (Пункт 5)
+                bgOffset1 += globalSpeed * 0.05; // Гори (повільно)
+                bgOffset2 += globalSpeed * 0.15; // Місто (середнє)
+                roadOffset += globalSpeed;       // Дорога (максимальна швидкість = 1.0)
 
-                // Стріляємо в нього
-                let angle = Math.atan2(nearestZombie.y - player.y, nearestZombie.x - player.x);
-                bullets.push({
-                    x: player.x,
-                    y: player.y,
-                    dx: Math.cos(angle) * 7,
-                    dy: Math.sin(angle) * 7,
-                    radius: 5
-                });
-                lastShotTime = currentTime;
-                if (tg.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+                // Плавний рух гравця до цілі
+                player.x += (player.targetX - player.x) * player.turnSpeed;
+                player.bounceTimer += 0.15; // Для ефекту Arcade Bounce
             }
 
-            // Рух куль
-            bullets.forEach((b, bIdx) => {
-                b.x += b.dx;
-                b.y += b.dy;
-                // Видаляємо кулі за екраном
-                if (b.x < 0 || b.x > canvas.width || b.y < 0 || b.y > canvas.height) {
-                    bullets.splice(bIdx, 1);
-                }
-            });
-
-            // Рух зомбі до гравця
-            zombies.forEach((z, zIdx) => {
-                let angle = Math.atan2(player.y - z.y, player.x - z.x);
-                z.x += Math.cos(angle) * z.speed;
-                z.y += Math.sin(angle) * z.speed;
-
-                // Зіткнення зомбі з гравцем (нанесення шкоди)
-                let distToPlayer = Math.hypot(player.x - z.x, player.y - z.y);
-                if (distToPlayer < player.radius + z.radius) {
-                    player.hp -= 0.3; // Зменшуємо HP
-                    document.getElementById('hp-val').innerText = Math.max(0, Math.floor(player.hp));
-                    if (tg.HapticFeedback && Math.random() < 0.1) tg.HapticFeedback.impactOccurred('medium');
-                    
-                    if (player.hp <= 0) {
-                        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
-                        tg.showAlert(`Game Over! 💀\nYou survived until level ${player.level} and killed ${kills} zombies!`);
-                        // Перезапуск
-                        player.hp = player.maxHp;
-                        zombies = [];
-                        bullets = [];
-                        gems = [];
-                        kills = 0;
-                        player.level = 1;
-                        player.exp = 0;
-                        player.nextLevelExp = 10;
-                        player.damage = 25;
-                        document.getElementById('lvl-val').innerText = player.level;
-                        document.getElementById('kills-val').innerText = kills;
-                        document.getElementById('hp-val').innerText = player.hp;
-                    }
-                }
-
-                // Зіткнення куль із зомбі
-                bullets.forEach((b, bIdx) => {
-                    let distToBullet = Math.hypot(b.x - z.x, b.y - z.y);
-                    if (distToBullet < z.radius + b.radius) {
-                        z.hp -= player.damage;
-                        bullets.splice(bIdx, 1);
-
-                        // Якщо зомбі помер
-                        if (z.hp <= 0) {
-                            kills++;
-                            document.getElementById('kills-val').innerText = kills;
-                            // Створюємо кристал досвіду на місці зомбі
-                            gems.push({ x: z.x, y: z.y, radius: 6 });
-                            zombies.splice(zIdx, 1);
-                        }
-                    }
-                });
-            });
-
-            // Збір кристалів досвіду (EXP)
-            gems.forEach((g, gIdx) => {
-                let distToGem = Math.hypot(player.x - g.x, player.y - g.y);
-                if (distToGem < player.radius + g.radius) {
-                    gems.splice(gIdx, 1);
-                    player.exp++;
-                    
-                    // Перевірка на новий рівень (Level Up)
-                    if (player.exp >= player.nextLevelExp) {
-                        player.level++;
-                        player.exp = 0;
-                        player.nextLevelExp = Math.floor(player.nextLevelExp * 1.5);
-                        player.maxHp += 15;
-                        player.hp = player.maxHp; // Повністю лікуємо при Level Up
-                        player.damage += 10; // Збільшуємо шкоду
-                        
-                        document.getElementById('max-hp-val').innerText = player.maxHp;
-                        document.getElementById('hp-val').innerText = player.hp;
-                        document.getElementById('lvl-val').innerText = player.level;
-                        
-                        if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
-                        tg.showAlert(`🎉 LEVEL UP!\nYou reached Level ${player.level}!\nMax HP and Damage increased!`);
-                    }
-                    document.getElementById('exp-val').innerText = player.exp;
-                }
-            });
-
-
-            // 2. МАЛЮВАННЯ НА CANVAS
+            // --- МАЛЮВАННЯ ---
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            // Малюємо кристали досвіду (жовті ромбики)
-            gems.forEach(g => {
-                ctx.fillStyle = '#f59e0b';
-                ctx.beginPath();
-                ctx.arc(g.x, g.y, g.radius, 0, Math.PI * 2);
-                ctx.fill();
-            });
+            // ШАР 1: Небо + Гори (Паралакс 0.05)
+            let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height * 0.3);
+            skyGrad.addColorStop(0, COLORS.sky);
+            skyGrad.addColorStop(1, COLORS.skyDark);
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, canvas.width, canvas.height * 0.35);
 
-            // Малюємо кулі (жовті маленькі кола)
-            bullets.forEach(b => {
-                ctx.fillStyle = '#fbbf24';
+            ctx.fillStyle = COLORS.mountain;
+            for (let i = -1; i < 3; i++) {
+                let xPos = (i * canvas.width) - (bgOffset1 % canvas.width);
                 ctx.beginPath();
-                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+                ctx.moveTo(xPos, canvas.height * 0.35);
+                ctx.lineTo(xPos + canvas.width * 0.5, canvas.height * 0.22);
+                ctx.lineTo(xPos + canvas.width, canvas.height * 0.35);
                 ctx.fill();
-            });
+            }
 
-            // Малюємо зомбі (зелені кола з очима)
-            zombies.forEach(z => {
-                ctx.fillStyle = '#10b981';
-                ctx.beginPath();
-                ctx.arc(z.x, z.y, z.radius, 0, Math.PI * 2);
-                ctx.fill();
+            // ШАР 2: Прості міські кубики (Паралакс 0.15)
+            ctx.fillStyle = COLORS.city;
+            for (let i = -1; i < 5; i++) {
+                let xPos = (i * 120) - (bgOffset2 % 120);
+                // Будівлі без зайвого шуму (Пункт 2 і 3)
+                ctx.fillRect(xPos, canvas.height * 0.28, 90, canvas.height * 0.07);
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = COLORS.outline;
+                ctx.strokeRect(xPos, canvas.height * 0.28, 90, canvas.height * 0.07);
+            }
+
+            // ШАР 4: Дорога (2D перспектива з градієнтом, без шуму)
+            ctx.fillStyle = COLORS.road;
+            ctx.fillRect(canvas.width * 0.15, canvas.height * 0.35, canvas.width * 0.7, canvas.height * 0.65);
+            
+            // Чорні відбійники/бордюри по краях дороги
+            ctx.fillStyle = COLORS.outline;
+            ctx.fillRect(canvas.width * 0.14, canvas.height * 0.35, 10, canvas.height * 0.65);
+            ctx.fillRect(canvas.width * 0.85, canvas.height * 0.35, 10, canvas.height * 0.65);
+
+            // Розмітка дороги (рух текстури вниз для імітації швидкості)
+            ctx.fillStyle = COLORS.roadLine;
+            let lineY = (roadOffset % 80) - 80;
+            while (lineY < canvas.height) {
+                if (lineY > canvas.height * 0.35) {
+                    ctx.fillRect(canvas.width * 0.49, lineY, 8, 40);
+                    ctx.fillRect(canvas.width * 0.33, lineY, 4, 40);
+                    ctx.fillRect(canvas.width * 0.66, lineY, 4, 40);
+                }
+                lineY += 80;
+            }
+
+            // ШАР 3: Ближній фон (Рекламні щити та контейнери збоку траси)
+            sideObjects.forEach((obj, idx) => {
+                if (gameActive) obj.y += globalSpeed;
                 
-                // Мультяшні очі зомбі
-                ctx.fillStyle = '#ffffff';
-                ctx.beginPath();
-                ctx.arc(z.x - 5, z.y - 3, 3, 0, Math.PI * 2);
-                ctx.arc(z.x + 5, z.y - 3, 3, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.fillStyle = '#red';
-                ctx.beginPath();
-                ctx.arc(z.x - 5, z.y - 3, 1, 0, Math.PI * 2);
-                ctx.arc(z.x + 5, z.y - 3, 1, 0, Math.PI * 2);
-                ctx.fill();
+                if (obj.type === 'billboard') {
+                    // Ніжка щита
+                    ctx.fillRect(obj.x + 25, obj.y + 20, 6, 40);
+                    // Сам щит (яскравий неоновий пластик)
+                    drawCardboardObj(obj.x, obj.y, obj.width, obj.height, '#f43f5e', 4);
+                } else {
+                    // Іграшковий морський контейнер біля дороги
+                    drawCardboardObj(obj.x, obj.y, obj.width, obj.height, obj.color, 6);
+                }
+
+                if (obj.y > canvas.height) sideObjects.splice(idx, 1);
             });
 
-            // Малюємо нашого крутого героя (синій мультяшний персонаж)
-            ctx.fillStyle = '#3b82f6';
-            ctx.beginPath();
-            ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-            ctx.fill();
+            // РУХ ТА МАЛЮВАННЯ ТРАФІКУ
+            traffic.forEach((enemy, idx) => {
+                if (gameActive) enemy.y += (globalSpeed - enemy.speed);
 
-            // Біла кепка/пов'язка для стилю
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(player.x, player.y - 8, 10, 0, Math.PI, true);
-            ctx.fill();
+                // Малюємо машинку суперника в стилі 2-3 тони
+                drawCardboardObj(enemy.x - enemy.width/2, enemy.y, enemy.width, enemy.height, enemy.color);
+                
+                // Спрощене велике скло кабіни
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(enemy.x - enemy.width/2 + 6, enemy.y + 10, enemy.width - 12, 15);
+                ctx.strokeStyle = COLORS.outline;
+                ctx.strokeRect(enemy.x - enemy.width/2 + 6, enemy.y + 10, enemy.width - 12, 15);
 
-            // Очі героя
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(player.x - 5, player.y - 1, 4, 0, Math.PI * 2);
-            ctx.arc(player.x + 5, player.y - 1, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#000000';
-            ctx.beginPath();
-            ctx.arc(player.x - 5, player.y - 1, 1.5, 0, Math.PI * 2);
-            ctx.arc(player.x + 5, player.y - 1, 1.5, 0, Math.PI * 2);
-            ctx.fill();
+                // Перевірка зіткнення (Аварія)
+                if (gameActive && 
+                    player.x - player.width/2 < enemy.x + enemy.width/2 &&
+                    player.x + player.width/2 > enemy.x - enemy.width/2 &&
+                    player.y < enemy.y + enemy.height &&
+                    player.y + player.height > enemy.y) {
+                    
+                    // КРАШ ГРИ
+                    gameActive = false;
+                    if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+                    tg.showAlert(`💥 CRASH!\nYour Score: ${Math.floor(score / 10)} points.\nTap screen to restart!`);
+                }
 
-            requestAnimationFrame(gameLoop);
+                if (enemy.y > canvas.height + 100) traffic.splice(idx, 1);
+            });
+
+            // МАЛЮВАННЯ НАШОЇ ІГРАШКОВОЇ ФУРИ (Toy Arcade Bounce)
+            let bounceY = gameActive ? Math.sin(player.bounceTimer) * 3 : 0; // Пружний рух вгору-вниз (Пункт 6)
+            
+            // Основний корпус великої кабіни фури
+            drawCardboardObj(player.x - player.width/2, player.y + bounceY, player.width, player.height, COLORS.player, 12);
+            
+            // Величезне мультяшне лобове скло (Пункт 6 - перебільшені форми)
+            ctx.fillStyle = '#93c5fd';
+            ctx.fillRect(player.x - player.width/2 + 6, player.y + 15 + bounceY, player.width - 12, 22);
+            ctx.strokeRect(player.x - player.width/2 + 6, player.y + 15 + bounceY, player.width - 12, 22);
+            
+            // Жовті пластикові фари
+            ctx.fillStyle = '#facc15';
+            ctx.fillRect(player.x - player.width/2 + 6, player.y + 70 + bounceY, 10, 8);
+            ctx.fillRect(player.x + player.width/2 - 16, player.y + 70 + bounceY, 10, 8);
+
+            // Текст-інструкція, якщо розбився
+            if (!gameActive) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, canvas.height/2 - 40, canvas.width, 80);
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 20px sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2 - 5);
+                ctx.font = '16px sans-serif';
+                ctx.fillText('Tap screen to try again', canvas.width/2, canvas.height/2 + 22);
+            }
+
+            requestAnimationFrame(updateAndRender);
         }
 
-        // Запуск гри
-        requestAnimationFrame(gameLoop);
+        // Запуск
+        requestAnimationFrame(updateAndRender);
     </script>
 </body>
 </html>
